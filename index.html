@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>월렛미러 - 내 소비 유형 진단</title>
+  <meta name="description" content="한 달 소비 내역으로 내 소비 유형을 진단하고, 미래 손실과 절약 플랜을 알려주는 서비스">
+  <!-- 글꼴: Pretendard (인터넷에 연결돼 있으면 적용, 없으면 맑은 고딕 등으로 대체) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main id="app">
+
+    <!-- 1. 시작 화면 -->
+    <section id="screen-start" class="screen active">
+      <div class="hero">
+        <div class="float-items" aria-hidden="true">
+          <span class="bubble b1" style="--d:0s">🛵</span>
+          <span class="bubble b2" style="--d:.8s">☕</span>
+          <span class="bubble b3" style="--d:1.4s">🎀</span>
+          <span class="bubble b4" style="--d:.4s">🛍️</span>
+        </div>
+        <div class="wordmark">wallet mirror<i>.</i></div>
+        <p class="eyebrow">지갑이 말해 주는 내 진짜 모습</p>
+        <h1>월렛미러<em>✦</em></h1>
+        <p class="hero-sub">한 달 소비로 알아보는<br><b>나만의 소비 유형</b> 🫧</p>
+      </div>
+
+      <div class="card form-card">
+        <label class="field">
+          <span class="field-label">월 소득 (용돈·알바비 합계)</span>
+          <span class="income-wrap">
+            <input id="income" type="number" inputmode="numeric" min="1" step="1" value="70">
+            <em>만원</em>
+          </span>
+        </label>
+
+        <div class="divider"><span>① 내 데이터로 분석</span></div>
+        <label class="dropzone" id="dropzone" for="file">
+          <span class="dz-icon">📄</span>
+          <span id="file-name">카드·현금 내역 CSV 파일 선택</span>
+          <small>컬럼: 날짜, 사용처, 금액, (카테고리), (결제수단)</small>
+        </label>
+        <input id="file" type="file" accept=".csv,text/csv" hidden>
+        <button id="btn-analyze" class="btn primary" disabled>내 소비 유형 진단하기</button>
+
+        <div class="divider"><span>② 샘플 데이터로 체험</span></div>
+        <div class="sample-grid">
+          <button class="btn sample" data-sample="baemin">🛵<span>배달 많은 사람</span></button>
+          <button class="btn sample" data-sample="sub">📺<span>구독 많은 사람</span></button>
+          <button class="btn sample" data-sample="saver">🐿️<span>알뜰한 사람</span></button>
+        </div>
+
+        <p id="start-error" class="error" role="alert" hidden></p>
+
+        <details class="csv-help">
+          <summary>CSV는 어떻게 만들어요?</summary>
+          <p>카드사 앱·홈페이지의 이용내역을 엑셀로 내려받아 CSV로 저장하고, 현금 소비는 직접 줄을 추가하세요. 카테고리가 비어 있으면 사용처 이름으로 자동 분류해요. (UTF-8, EUC-KR 모두 읽어요)</p>
+          <p>샘플 CSV 받기:
+            <a href="#" data-download="baemin">배달형</a> ·
+            <a href="#" data-download="sub">구독형</a> ·
+            <a href="#" data-download="saver">알뜰형</a>
+          </p>
+        </details>
+
+        <p class="privacy" id="privacy">🔒 내역은 이 브라우저 안에서만 처리돼요. 서버로 보내거나 저장하지 않아요.</p>
+      </div>
+    </section>
+
+    <!-- 2. 로딩 화면 -->
+    <section id="screen-loading" class="screen">
+      <div class="loading">
+        <div class="spinner">👛</div>
+        <p id="loading-msg">분석 중이에요…</p>
+        <div class="progress"><i id="progress-bar"></i></div>
+      </div>
+    </section>
+
+    <!-- 3. 결과 화면 -->
+    <section id="screen-result" class="screen">
+      <div id="result"></div>
+    </section>
+
+  </main>
+
+  <script src="js/config.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/logic.js"></script>
+  <script src="js/stats.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>

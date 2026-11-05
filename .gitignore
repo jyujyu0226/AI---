@@ -1,0 +1,31 @@
+# ---- 비밀 값 / 환경 설정 ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.*
+
+# ---- 의존성 ----
+node_modules/
+
+# ---- 테스트·QA 임시 파일 (스크린샷, 헤드리스 브라우저 프로필 등) ----
+wm_test/
+wm_qa/
+wm_gen/
+screenshots/
+prof*/
+*.screenshot.png
+
+# ---- 압축 파일 (sample_csv 폴더 내용과 중복) ----
+*.zip
+
+# ---- OS / 에디터 / 로그 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.log
+
+# 참고: images/types/*.png (틸론으로 만든 유형 이미지)는 서비스에 필요한 파일이라 제외하지 않아요.
