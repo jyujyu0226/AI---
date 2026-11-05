@@ -223,6 +223,14 @@
     },
   };
 
+  // 유형별 캐릭터 이미지 (SDXL-Turbo로 생성, images/types/ 에 있음)
+  // 결과 화면 유형 카드와 '이미지로 저장' 카드에 쓰여요. 파일이 없으면 이모지로 대신 보여요.
+  const TYPE_IMAGES = {
+    baemin: "type01_baemin.png", sub: "type02_sub.png", monthend: "type03_monthend.png", cafe: "type04_cafe.png",
+    shop: "type05_shop.png", saver: "type06_saver.png", flex: "type07_flex.png", social: "type08_social.png",
+  };
+  Object.keys(TYPE_IMAGES).forEach((id) => { TYPES[id].image = "images/types/" + TYPE_IMAGES[id]; });
+
   // 궁합표: 잘 맞는 유형 1개, 안 맞는 유형 1개 (유형 × 유형 규칙표)
   const COMPAT = {
     baemin:   { good: "saver",   goodWhy: "집밥 레시피를 전수해 줄 수 있는 든든한 수행자예요.",           bad: "social",   badWhy: "같이 있으면 '시켜 먹자' 모임이 폭주해서 배달비가 두 배가 돼요." },

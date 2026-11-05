@@ -161,12 +161,13 @@
     box.innerHTML = emojiCharacter(t); // 기본값
     const setImg = (src, onFail) => {
       const img = new Image();
-      img.alt = t.name + " 캐릭터"; img.className = "char-img";
+      img.alt = t.name; img.className = "char-img"; // alt = 유형 이름
       img.onload = () => { box.innerHTML = ""; box.appendChild(img); };
-      img.onerror = onFail || (() => {});
+      img.onerror = onFail || (() => { console.warn(`[월렛미러] 유형 이미지를 찾지 못해 이모지로 보여요: ${src}`); });
       img.src = src;
     };
-    const premade = () => setImg(`${CFG.imageDir}${t.id}.${CFG.imageExt}`);
+    // 유형 이미지: data.js 의 TYPES[id].image (없으면 예전 규칙 images/types/{id}.png)
+    const premade = () => setImg(t.image || `${CFG.imageDir}${t.id}.${CFG.imageExt}`);
     if (CFG.tillon.enabled && CFG.tillon.apiUrl) {
       try { setImg(await tillonGenerate(buildPrompt(r)), premade); return; } catch (e) { /* 대체 동작 */ }
     }
@@ -302,9 +303,9 @@
         <div class="type-badge"><i></i>나의 소비 유형</div>
         <div class="char-stage">
           <div id="char-wrap" class="char-wrap"></div>
-          <span class="orbit o1" aria-hidden="true">${orbitEmoji[0] || "🫧"}</span>
+          <span class="orbit o1" aria-hidden="true">${orbitEmoji[0] || "✨"}</span>
           <span class="orbit o2" aria-hidden="true">🎀</span>
-          <span class="orbit o3" aria-hidden="true">${orbitEmoji[1] || "🫧"}</span>
+          <span class="orbit o3" aria-hidden="true">${orbitEmoji[1] || "✨"}</span>
         </div>
         <h2>${esc(t.name)}</h2>
         <p class="tagline">“${esc(t.tagline)}”</p>
@@ -436,7 +437,33 @@
   }
 
   // ---------- 이미지 저장 (유형 카드) ----------
-  function saveCard(r) {
+  // 유형 이미지 불러오기 (실패하면 null → 이모지로 대신 그림)
+  function loadTypeImage(t) {
+    return new Promise((resolve) => {
+      if (!t.image) return resolve(null);
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => { console.warn(`[월렛미러] 저장 카드용 유형 이미지를 찾지 못했어요: ${t.image}`); resolve(null); };
+      img.src = t.image;
+    });
+  }
+
+  async function saveCard(r) {
+    const t = r.type;
+    const img = await loadTypeImage(t);
+    let c = drawCard(r, img), url;
+    try { url = c.toDataURL("image/png"); } catch (e) {
+      // file:// 로 연 경우 브라우저 보안 때문에 이미지가 든 캔버스를 저장할 수 없음 → 이모지 카드로 저장
+      console.warn("[월렛미러] 이미지가 든 카드를 저장할 수 없어 이모지 카드로 저장해요 (로컬 파일로 열었을 때 생길 수 있어요):", e.message);
+      try { c = drawCard(r, null); url = c.toDataURL("image/png"); } catch (e2) { url = null; }
+    }
+    if (!url) { alert("이미지 저장에 실패했어요. 화면을 캡처해 주세요."); return; }
+    const a = document.createElement("a");
+    a.download = `월렛미러_${t.name}.png`; a.href = url;
+    a.click();
+  }
+
+  function drawCard(r, img) {
     const W = 1080, H = 1350, t = r.type;
     const c = document.createElement("canvas"); c.width = W; c.height = H;
     const ctx = c.getContext("2d");
@@ -453,12 +480,28 @@
     if ("letterSpacing" in ctx) ctx.letterSpacing = "10px";
     ctx.fillText("WALLET MIRROR", W / 2 + 5, 150);
     if ("letterSpacing" in ctx) ctx.letterSpacing = "0px";
-    ctx.fillStyle = t.color + "66"; ctx.beginPath(); ctx.arc(W / 2, 400, 205, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,.95)"; ctx.lineWidth = 8; ctx.stroke();
-    ctx.font = "260px 'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',sans-serif"; ctx.fillStyle = "#000";
-    ctx.fillText(t.emoji, W / 2, 490);
+    if (img) {
+      // 유형 이미지: 410×410 칸 안에 비율 그대로 맞추고(contain) 모서리를 둥글게 잘라 그림
+      const box = 410, cx = W / 2, cy = 400;
+      const s = Math.min(box / img.naturalWidth, box / img.naturalHeight);
+      const dw = img.naturalWidth * s, dh = img.naturalHeight * s, dx = cx - dw / 2, dy = cy - dh / 2, rad = 48;
+      ctx.save();
+      ctx.shadowColor = "rgba(120,100,150,.28)"; ctx.shadowBlur = 36; ctx.shadowOffsetY = 14;
+      ctx.fillStyle = "#fff"; rr(dx, dy, dw, dh, rad); ctx.fill();
+      ctx.restore();
+      ctx.save(); rr(dx, dy, dw, dh, rad); ctx.clip();
+      ctx.drawImage(img, dx, dy, dw, dh);
+      ctx.restore();
+      ctx.strokeStyle = "rgba(255,255,255,.95)"; ctx.lineWidth = 8; rr(dx, dy, dw, dh, rad); ctx.stroke();
+    } else {
+      ctx.fillStyle = t.color + "66"; ctx.beginPath(); ctx.arc(W / 2, 400, 205, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,.95)"; ctx.lineWidth = 8; ctx.stroke();
+      ctx.font = "260px 'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',sans-serif"; ctx.fillStyle = "#000";
+      ctx.fillText(t.emoji, W / 2, 490);
+    }
+    ctx.textAlign = "center";
     ctx.font = "90px 'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',sans-serif";
-    ctx.fillText("🎀", W / 2 + 250, 250); ctx.fillText("🫧", W / 2 - 270, 520);
+    ctx.fillText("🎀", W / 2 + 250, 250); ctx.fillText("✨", W / 2 - 270, 520);
     ctx.fillStyle = "#2A2530"; ctx.font = `900 88px ${font}`; ctx.fillText(t.name, W / 2, 700);
     ctx.fillStyle = "#6E6675"; ctx.font = `600 38px ${font}`;
     wrap(ctx, `“${t.tagline}”`, W / 2, 770, W - 260, 52);
@@ -479,11 +522,7 @@
     ctx.fillText("walletmirror", W / 2 - 14, 1260);
     ctx.fillStyle = "#D9608C"; ctx.textAlign = "left";
     ctx.fillText(".", W / 2 + ctx.measureText("walletmirror").width / 2 - 14, 1260);
-    try {
-      const a = document.createElement("a");
-      a.download = `월렛미러_${t.name}.png`; a.href = c.toDataURL("image/png");
-      a.click();
-    } catch (e) { alert("이미지 저장에 실패했어요. 화면을 캡처해 주세요."); }
+    return c;
   }
   function wrap(ctx, text, x, y, maxW, lh) {
     let line = "", yy = y;
