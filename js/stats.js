@@ -86,5 +86,12 @@
     return { total, same };
   }
 
-  WM.stats = { enabled, save, count, getTypeShare };
+  // 유형별 인원 분포 (유형마다 개수만 센다. 개별 행은 가져오지 않음)
+  async function getDistribution() {
+    const names = Object.values(D.TYPES).map((t) => t.name);
+    const [total, ...counts] = await Promise.all([count(), ...names.map((n) => count(n))]);
+    return { total, types: names.map((name, i) => ({ name, count: counts[i] })) };
+  }
+
+  WM.stats = { enabled, save, count, getTypeShare, getDistribution };
 })();

@@ -7,7 +7,7 @@
   <meta name="description" content="한 달 소비 내역으로 내 소비 유형을 진단하고, 미래 손실과 절약 플랜을 알려주는 서비스">
   <!-- 글꼴: Pretendard (인터넷에 연결돼 있으면 적용, 없으면 맑은 고딕 등으로 대체) -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=20261106h">
 </head>
 <body>
   <main id="app">
@@ -35,14 +35,20 @@
             <em>만원</em>
           </span>
         </label>
+        <label class="field owner-field">
+          <span class="field-label">본인 이름 <small>(선택 · 은행 내역에서 내 계좌끼리 옮긴 돈을 찾는 데만 써요)</small></span>
+          <input id="owner-name" type="text" autocomplete="off" placeholder="예: 홍길동">
+          <small class="owner-help">입력한 이름은 저장·전송하지 않아요. 거래 상대가 이 이름이면 '본인 계좌 이체'로 보고 지출·수입에서 빼요.</small>
+        </label>
 
         <div class="divider"><span>① 내 데이터로 분석</span></div>
         <label class="dropzone" id="dropzone" for="file">
           <span class="dz-icon">📄</span>
           <span id="file-name">카드·현금 내역 CSV 파일 선택</span>
-          <small>컬럼: 날짜, 사용처, 금액, (카테고리), (결제수단)</small>
+          <small>컬럼: 날짜, 가맹점, 금액, (결제수단), (메모)</small>
         </label>
-        <input id="file" type="file" accept=".csv,text/csv" hidden>
+        <input id="file" type="file" accept=".csv,.txt,.tsv,text/csv" hidden>
+        <p id="file-status" class="file-status" role="status" hidden></p>
         <button id="btn-analyze" class="btn primary" disabled>내 소비 유형 진단하기</button>
 
         <div class="divider"><span>② 샘플 데이터로 체험</span></div>
@@ -56,7 +62,8 @@
 
         <details class="csv-help">
           <summary>CSV는 어떻게 만들어요?</summary>
-          <p>카드사 앱·홈페이지의 이용내역을 엑셀로 내려받아 CSV로 저장하고, 현금 소비는 직접 줄을 추가하세요. 카테고리가 비어 있으면 사용처 이름으로 자동 분류해요. (UTF-8, EUC-KR 모두 읽어요)</p>
+          <p>카드사 앱·홈페이지의 이용내역을 엑셀로 내려받아 CSV로 저장하고, 현금 소비는 직접 줄을 추가하세요. 가맹점 이름으로 카테고리를 자동 분류해요. (UTF-8, EUC-KR 모두 읽어요)</p>
+          <p>AI로 쉽게 만드는 방법은 <a href="#csv-guide">페이지 맨 아래 'CSV 파일 만드는 법'</a>을 보세요.</p>
           <p>샘플 CSV 받기:
             <a href="#" data-download="baemin">배달형</a> ·
             <a href="#" data-download="sub">구독형</a> ·
@@ -82,12 +89,52 @@
       <div id="result"></div>
     </section>
 
+    <!-- 4. CSV 파일 만드는 법 (모든 화면 맨 아래) -->
+    <section id="csv-guide" class="card guide-card">
+      <h2>📝 CSV 파일 만드는 법</h2>
+      <p class="guide-warn">⚠️ 카드 내역에는 개인정보가 있으니 카드번호, 계좌번호는 지우고 사용하세요.<br>
+        <small>AI에 붙여 넣기 전에 카드번호·계좌번호·승인번호·이름을 먼저 지워 주세요.</small></p>
+      <ol class="guide-steps">
+        <li>카드사 앱·홈페이지에서 이용내역을 열어 복사하거나 엑셀로 내려받아요.</li>
+        <li>아래 프롬프트를 <b>복사</b>해서 ChatGPT, Claude 같은 AI에 붙여 넣고, 맨 아래 <b>[내 내역]</b> 자리에 이용내역을 붙여 넣어요.</li>
+        <li>AI가 만들어 준 CSV 내용을 메모장에 붙여 넣고 <b>내역.csv</b>로 저장해요. (인코딩: UTF-8)</li>
+        <li>현금으로 쓴 돈은 같은 형식으로 한 줄씩 추가하고, 위에서 파일을 올리면 끝!</li>
+      </ol>
+      <div class="prompt-head">
+        <span>AI에게 보낼 프롬프트</span>
+        <button id="btn-copy-prompt" class="copy-btn" type="button">📋 프롬프트 복사</button>
+      </div>
+<pre id="ai-prompt" class="prompt-box">아래 [내 내역]에 붙여 넣은 카드/현금 사용 내역을 CSV로 바꿔 줘.
+
+[규칙]
+1. 첫 줄은 정확히 이 헤더로 써 줘: 날짜,가맹점,금액,결제수단,메모
+2. 날짜: YYYY-MM-DD 형식 (예: 2026-11-05). 시간은 빼 줘.
+3. 가맹점: 가게·서비스 이름 그대로. 이름 안에 쉼표(,)가 있으면 공백으로 바꿔 줘.
+4. 금액: 숫자만 써 줘 (쉼표, "원", 공백 없이). 지출은 양수, 취소·환불은 음수 (예: 12500, -12500).
+5. 결제수단: "카드" 또는 "현금" 중 하나만.
+6. 메모: 가게 이름으로 알 수 있으면 거래 종류를 한 단어로 적어 줘 (식사, 배달, 커피, 교통, 쇼핑, 구독, 문화, 게임, 운동, 병원 중 하나). 모르겠으면 비워 둬. 메모 안에는 쉼표를 쓰지 마.
+7. 한 줄에 거래 하나씩. 제목, 합계, 요약 줄은 넣지 마.
+8. 카드번호, 계좌번호, 승인번호, 이름 같은 개인정보는 넣지 마.
+9. 설명 없이 CSV 내용만 코드 블록 하나로 보여 줘.
+
+[예시]
+날짜,가맹점,금액,결제수단,메모
+2026-11-01,스타벅스 강남역점,5600,카드,커피
+2026-11-02,진미옥,9000,현금,식사
+2026-11-03,무신사,-39000,카드,쇼핑
+2026-11-04,(주)한국정보통신,15000,카드,
+
+[내 내역]
+(여기에 이용내역을 붙여 넣으세요)</pre>
+      <p class="note">이 형식(날짜,가맹점,금액,결제수단,메모)은 월렛미러가 그대로 읽을 수 있어요. 카드사에서 받은 CSV를 바로 올려도 대부분 자동으로 인식해요.</p>
+    </section>
+
   </main>
 
-  <script src="js/config.js"></script>
-  <script src="js/data.js"></script>
-  <script src="js/logic.js"></script>
-  <script src="js/stats.js"></script>
-  <script src="js/ui.js"></script>
+  <script src="js/config.js?v=20261106h"></script>
+  <script src="js/data.js?v=20261106h"></script>
+  <script src="js/logic.js?v=20261106h"></script>
+  <script src="js/stats.js?v=20261106h"></script>
+  <script src="js/ui.js?v=20261106h"></script>
 </body>
 </html>

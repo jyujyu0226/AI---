@@ -29,3 +29,14 @@ desktop.ini
 *.log
 
 # 참고: images/types/*.png (틸론으로 만든 유형 이미지)는 서비스에 필요한 파일이라 제외하지 않아요.
+
+# ---- 실제 카드/현금 내역 (개인정보! 절대 올리지 않기) ----
+# 모든 CSV·엑셀 파일을 기본으로 제외하고, 가상 데이터 폴더만 예외로 허용해요.
+# ※ sample_csv/, test-data/ 에는 가짜 데이터만 넣으세요.
+*.csv
+*.tsv
+*.xls
+*.xlsx
+내역*.txt
+!sample_csv/*.csv
+!test-data/*.csv

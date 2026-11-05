@@ -25,10 +25,52 @@
     return Math.round(v * 10000);
   }
 
-  async function readFileText(file) {
-    const buf = await file.arrayBuffer();
-    try { return new TextDecoder("utf-8", { fatal: true }).decode(buf); }
-    catch (e) { return new TextDecoder("euc-kr").decode(buf); }
+  // 파일을 고르면 바로 읽어서 "총 N건" 또는 오류를 보여 준다. 읽은 거래가 없으면 분석 버튼을 막는다.
+  function setFileStatus(text, ok) {
+    const el = $("file-status");
+    el.innerHTML = text; el.hidden = !text;
+    el.classList.toggle("ok", !!ok);
+  }
+  let loadSeq = 0;
+  async function loadFile(f) {
+    const seq = ++loadSeq; // 파일을 연달아 바꾸면 마지막 파일 결과만 반영
+    state.file = f || null; state.parsed = null;
+    $("btn-analyze").disabled = true;
+    showError(""); setFileStatus("");
+    $("file-name").textContent = f ? "📄 " + f.name : "카드·현금 내역 CSV 파일 선택";
+    if (!f) return;
+    try {
+      const buf = await f.arrayBuffer();
+      if (seq !== loadSeq) return;
+      Object.keys(userOverrides).forEach((k) => delete userOverrides[k]); // 새 파일이면 이전 수정 초기화
+      L.setOverrides({}); state.openMerchants = false; state.merchantOrder = null;
+      L.setOwnerName($("owner-name").value);
+      const parsed = L.parseFile(buf);
+      state.parsed = parsed;
+      $("file-name").textContent = "✅ " + f.name;
+      const extra = [];
+      if (parsed.refunds) extra.push(`취소·환불 ${parsed.refunds}건 포함`);
+      if (parsed.skipped) extra.push(`건너뜀 ${parsed.skipped}건 – ${parsed.skipText}`);
+      if (parsed.headerRow > 1) extra.push(`${parsed.headerRow}번째 줄을 컬럼 이름으로 사용`);
+      const col = parsed.columns || {};
+      extra.push(`사용한 컬럼: 날짜='${col.date}' · 가맹점='${col.merchant}' · 금액='${col.amount}'` +
+        (col.category ? ` · 카테고리='${col.category}'` : "") + (col.industry ? ` · 업종='${col.industry}'` : "") + (col.memo ? ` · 메모='${col.memo}'` : ""));
+      const by = parsed.classifiedBy || {};
+      extra.push(`분류 근거: 가맹점명 ${by.merchant || 0}건` + (by.column ? ` · 카테고리 컬럼 ${by.column}건` : "") +
+        (by.industry ? ` · 업종 ${by.industry}건` : "") + (by.memo ? ` · 메모 ${by.memo}건` : "") + ` · 분류 못 함 ${by.none || 0}건`);
+      (parsed.notes || []).forEach((n) => extra.push("⚠️ " + n));
+      const tCount = parsed.txns.filter((t) => t.category === L.TRANSFER).length;
+      if (tCount) extra.push(`🔁 본인 계좌 이체로 보이는 거래 ${tCount}건은 지출·수입에서 빼요 (결과 화면에서 확인·해제할 수 있어요)`);
+      setFileStatus(`<b>총 ${parsed.txns.length.toLocaleString("ko-KR")}건의 거래를 읽었어요.</b>` +
+        extra.map((x) => `<small>${esc(x)}</small>`).join("") +
+        `<small>인코딩 ${esc(parsed.encoding)} · 구분자 ${esc(parsed.delimiter)}</small>`, true);
+      $("btn-analyze").disabled = false;
+    } catch (e) {
+      if (seq !== loadSeq) return;
+      $("file-name").textContent = "⚠️ " + f.name;
+      setFileStatus("<b>총 0건의 거래를 읽었어요.</b>");
+      showError(e.message);
+    }
   }
 
   async function run(getTxns) {
@@ -42,6 +84,7 @@
     } catch (e) { showError(e.message); return; }
 
     state.busy = true;
+    state.merchantOrder = null; // 새 분석이면 목록을 다시 금액 순으로
     show("loading");
     const msgs = ["카드 내역 훑어보는 중… 🔍", "카테고리 분류하는 중… 🗂️", "미래 지갑 시뮬레이션 중… 🔮", "소비 유형 판정 중… 🧪"];
     const bar = $("progress-bar");
@@ -130,6 +173,69 @@
     premade();
   }
 
+  // 분류하지 못한 가맹점 (기타 비중이 20% 이상일 때만, 금액 큰 순 최대 8개)
+  function unclassifiedHtml(r) {
+    const list = r.unclassified || [];
+    if (!list.length || r.cat["기타"].share < 0.2) return "";
+    const items = list.slice(0, 8).map((u) => `<li><span>${esc(u.name)}</span><b>${fmtWon(u.sum)}</b></li>`).join("");
+    return `<div class="unclassified">
+      <p class="unc-title">🔎 분류되지 않은 가맹점 <small>(지출의 ${pct(r.cat["기타"].share)} · ${list.length}곳)</small></p>
+      <ul>${items}</ul>
+      <p class="note">CSV에 <b>카테고리</b> 컬럼(식비·배달·카페·교통·쇼핑·구독·문화·게임·운동·병원비·기타)을 추가하거나 <b>메모</b>에 "점심", "커피"처럼 적으면 더 정확하게 분류돼요.</p>
+    </div>`;
+  }
+
+  // 가장 많이 쓴 항목 맞춤 절약법
+  function topTipHtml(r) {
+    const t = r.topTip;
+    if (!t || !t.tips.length) return "";
+    const action = t.action
+      ? `<div class="tip-action">이것만 실천해도 <b>${esc(t.action.label)}</b> → 월 <b>${fmtWon(t.action.monthly)}</b>, 1년 <b>${fmtWon(t.action.y1)}</b> 절약</div>`
+      : t.noCut ? `<div class="tip-action">병원비는 줄이기보다 <b>돌려받을 수 있는 돈</b>을 챙기는 게 좋아요.</div>` : "";
+    return `<section class="card tip-card" style="--tc:${D.CAT_COLORS[t.cat]}">
+      <h3 class="sec-title">🎯 가장 많이 쓴 항목 절약법</h3>
+      <p class="tip-lead">${D.CAT_EMOJI[t.cat]} <b>${esc(t.cat)}</b>에 이번 달 지출의 <b>${pct(t.share)}</b>(${fmtWon(t.sum)}, ${t.count}건)를 썼어요.</p>
+      <ol class="tip-list">${t.tips.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>
+      ${action}
+    </section>`;
+  }
+
+  // 한 카테고리가 80% 이상일 때: 왜 그렇게 분류됐는지(가장 흔한 근거)를 보여 줌
+  function dominanceHtml(r) {
+    const d = r.dominance;
+    if (!d || (r.meta && r.meta.isSample)) return "";
+    const notes = ((r.meta && r.meta.notes) || []).map((n) => `<p>⚠️ ${esc(n)}</p>`).join("");
+    return `<div class="dominance">
+      <p><b>📌 지출의 ${pct(d.share)}가 '${esc(d.category)}'로 분류됐어요.</b></p>
+      <p>${esc(d.category)} 거래 ${d.count}건 중 ${d.whyCount}건의 근거: <b>${esc(d.why)}</b></p>
+      ${notes}
+      <p class="note">실제와 다르면 아래 '분류 근거 확인 · 직접 고치기'에서 바꿀 수 있어요.</p>
+    </div>`;
+  }
+
+  // 가맹점별 분류 결과와 근거 + 직접 고치기 (금액 큰 순)
+  function merchantsHtml(r) {
+    let list = r.merchants || [];
+    if (!list.length || (r.meta && r.meta.isSample)) return "";
+    // 직접 고치는 동안에는 처음 보여 준 줄 순서를 유지 (바꾼 줄이 다른 자리로 튀지 않게)
+    if (state.merchantOrder) {
+      const pos = new Map(state.merchantOrder.map((n, i) => [n, i]));
+      list = list.slice().sort((a, b) => (pos.has(a.name) ? pos.get(a.name) : 1e9) - (pos.has(b.name) ? pos.get(b.name) : 1e9));
+    }
+    const opts = (cur) => D.CATEGORIES.map((c) => `<option value="${c}"${c === cur ? " selected" : ""}>${D.CAT_EMOJI[c]} ${c}</option>`).join("") +
+      `<option value="${L.TRANSFER}"${cur === L.TRANSFER ? " selected" : ""}>🔁 본인 계좌 이체 (분석 제외)</option>`;
+    const rows = list.map((m) => `<li${m.category === L.TRANSFER ? ' class="is-transfer"' : ""}>
+        <div class="mc-name"><span>${esc(m.name)}</span><small>${esc(m.why || "")}${m.count > 1 ? ` · ${m.count}건` : ""}</small></div>
+        <b>${fmtWon(m.sum)}</b>
+        <select data-merchant="${esc(m.name)}" aria-label="${esc(m.name)} 카테고리">${opts(m.category)}</select>
+      </li>`).join("");
+    return `<details class="merchant-check" id="merchant-check"${state.openMerchants ? " open" : ""}>
+      <summary>🧾 분류 근거 확인 · 직접 고치기 <small>(${list.length}곳)</small></summary>
+      <p class="note">가맹점 이름으로 자동 분류한 결과예요. 틀린 게 있으면 바로 바꾸세요. 같은 가맹점 거래가 모두 바뀌고 결과가 다시 계산돼요. 내 계좌끼리 옮긴 돈은 <b>🔁 본인 계좌 이체</b>로 바꾸면 지출·수입에서 빠져요. (수정 내용은 이 창을 닫으면 사라져요)</p>
+      <ul>${rows}</ul>
+    </details>`;
+  }
+
   // ---------- 결과 렌더 ----------
   function convBlock(c) {
     if (!c) return `<div class="conv-empty">치킨 한 마리에는 조금 못 미치지만<br>꾸준히 쌓이면 달라져요</div>`;
@@ -187,7 +293,7 @@
 
     const orbitEmoji = cats.filter((c) => c !== "기타").slice(0, 2).map((c) => D.CAT_EMOJI[c]);
     const meta = r.meta || {};
-    const dataNote = `분석 기준: ${r.curKey.replace("-", "년 ")}월 · 거래 ${r.txCount}건${meta.autoClassified ? ` · 자동 분류 ${meta.autoClassified}건` : ""}${meta.skipped ? ` · 건너뜀 ${meta.skipped}건` : ""}`;
+    const dataNote = `${meta.isSample ? "" : `총 ${r.meta.txns.length}건의 거래를 읽었어요 · `}분석 기준: ${r.curKey.replace("-", "년 ")}월 · 거래 ${r.txCount}건${r.refundCount ? ` · 취소·환불 ${r.refundCount}건 차감` : ""}${meta.autoClassified ? ` · 자동 분류 ${meta.autoClassified}건` : ""}${meta.skipped ? ` · 건너뜀 ${meta.skipped}건` : ""}`;
 
     $("result").innerHTML = `
       <div class="res-top"><button class="link-btn" data-act="restart">← 처음으로</button><span>${esc(dataNote)}</span></div>
@@ -210,14 +316,20 @@
           <span class="chip">현금 비중 <b>${pct(r.cashShare)}</b></span>
           <span class="chip">구독 <b>${r.features.subCount}개</b></span>
         </div>
-        <h3 class="sub-h">카테고리별 소비 비중</h3>
+        <h3 class="sub-h">카테고리별 소비 비중 <small>(${r.curKey.replace("-", "년 ")}월)</small></h3>
+        ${r.partialMonth ? `<p class="note">📅 ${esc(r.partialMonth.key.replace("-", "년 "))}월은 ${r.partialMonth.days}일까지 거래 ${r.partialMonth.count}건만 있어서, 그 전 달인 ${esc(r.curKey.replace("-", "년 "))}월을 분석했어요.</p>` : ""}
+        ${r.transfer && r.transfer.count ? `<p class="note">🔁 본인 계좌 이체 ${r.transfer.count}건(${fmtWon(r.transfer.sum)})은 지출·수입에서 뺐어요. 아래 '분류 근거 확인'에서 바꿀 수 있어요.</p>` : ""}
         <div class="bars">${bars}</div>
+        ${dominanceHtml(r)}
+        ${unclassifiedHtml(r)}
+        ${merchantsHtml(r)}
       </section>
 
       <section class="card stat-card" id="stat-card" hidden>
         <div class="stat-lead">📊 나와 같은 유형은?</div>
         <div class="stat-main" id="stat-main"></div>
         <div class="stat-bar"><i id="stat-fill"></i></div>
+        <ul class="stat-dist" id="stat-dist"></ul>
         <p class="note" id="stat-note"></p>
       </section>
 
@@ -229,6 +341,8 @@
         <div class="miles">${mile("3개월 뒤", r.proj.m3)}${mile("1년 뒤", r.proj.y1)}${mile("3년 뒤", r.proj.y3)}</div>
         <p class="note">월 소득 ${fmtWon(r.income)} · 월 지출 증가율(선형) ${(r.growth * 100).toFixed(1)}% ${r.growthAssumed ? "(내역이 1개월치라 가정값이에요)" : "(최근 지출 변화 기준)"}</p>
       </section>
+
+      ${topTipHtml(r)}
 
       <section class="card save-card">
         <h3 class="sec-title">💡 절약 플랜</h3>
@@ -266,29 +380,51 @@
 
   // ---------- 익명 통계: 결과 요약 저장 + 같은 유형 비율 ----------
   // 저장하는 값은 유형명·카테고리 비중뿐. 샘플 데이터 결과는 통계가 오염되지 않도록 저장하지 않고 조회만 해요.
-  async function loadStats(r) {
+  // 같은 파일을 여러 번 분석해도 한 번만 저장 (이 창이 열려 있는 동안만 기억, 파일 이름·크기·거래 수 기준)
+  const savedFiles = new Set();
+  async function loadStats(r, opts) {
     const S = WM.stats;
     if (!S || !S.enabled()) return; // 설정 안 했으면 아무 일도 하지 않음 (카드도 숨김 유지)
     const card = $("stat-card");
     if (!card) return;
     card.hidden = false;
     $("stat-main").textContent = "통계를 불러오는 중이에요…";
-    let saved = false;
+    const isSample = r.meta && r.meta.isSample;
+    const fileKey = state.file ? `${state.file.name}|${state.file.size}|${(r.meta && r.meta.txns || []).length}` : "";
+    let saved = false, already = false;
     try {
-      if (!(r.meta && r.meta.isSample) && !r.statSaved) {
-        r.statSaved = true; // 같은 결과를 두 번 저장하지 않음
-        try { await S.save(r); saved = true; } catch (e) { console.warn("[월렛미러] 결과 저장 실패:", e.message); }
+      if (!isSample && !(opts && opts.noSave)) {
+        if (fileKey && savedFiles.has(fileKey)) already = true;
+        else {
+          if (fileKey) savedFiles.add(fileKey);
+          try { await S.save(r); saved = true; } catch (e) { console.warn("[월렛미러] 결과 저장 실패:", e.message); }
+        }
       }
-      const { total, same } = await S.getTypeShare(r.type.name);
+      const dist = await S.getDistribution();
       if (state.result !== r) return; // 그 사이 다른 결과로 바뀌었으면 무시
+      const total = dist.total;
       if (!total) { $("stat-card").hidden = true; return; }
-      const p = (same / total) * 100;
+      const mine = dist.types.find((t) => t.name === r.type.name) || { count: 0 };
+      const same = mine.count, p = (same / total) * 100;
       $("stat-main").innerHTML = same > 0
-        ? `나와 같은 유형이 전체의 <b>${p.toFixed(1)}%</b>예요`
+        ? `나와 같은 <b class="stat-type">${esc(r.type.emoji)} ${esc(r.type.name)}</b>은 전체의 <b>${p.toFixed(1)}%</b>예요`
         : `아직 나와 같은 유형이 없어요 <b>(0%)</b>`;
       $("stat-fill").style.width = Math.max(p, same > 0 ? 2 : 0) + "%";
-      const notes = [`${r.type.name} ${same.toLocaleString("ko-KR")}명 / 전체 ${total.toLocaleString("ko-KR")}명 (익명 통계)`];
-      if (r.meta && r.meta.isSample) notes.push("샘플 데이터 결과는 통계에 저장하지 않아요.");
+      // 전체 유형 분포 (많은 순, 내 유형 강조)
+      const byName = Object.fromEntries(Object.values(D.TYPES).map((t) => [t.name, t]));
+      const rank = dist.types.slice().sort((a, b) => b.count - a.count);
+      const myRank = rank.findIndex((t) => t.name === r.type.name) + 1;
+      $("stat-dist").innerHTML = rank.map((t) => {
+        const tp = (t.count / total) * 100, ty = byName[t.name] || {};
+        return `<li class="${t.name === r.type.name ? "me" : ""}">
+          <span class="sd-name">${esc(ty.emoji || "")} ${esc(t.name)}${t.name === r.type.name ? " <em>나</em>" : ""}</span>
+          <span class="sd-track"><i style="width:${tp}%;background:${ty.color || "#ccc"}"></i></span>
+          <span class="sd-val">${tp.toFixed(1)}%</span></li>`;
+      }).join("");
+      const notes = [`${r.type.name} ${same.toLocaleString("ko-KR")}명 / 전체 ${total.toLocaleString("ko-KR")}명${same > 0 ? ` · 8개 유형 중 ${myRank}위` : ""} (익명 통계)`];
+      if (isSample) notes.push("샘플 데이터 결과는 통계에 저장하지 않아요.");
+      else if (already) notes.push("같은 파일은 한 번만 통계에 저장해요.");
+      else if (opts && opts.noSave) notes.push("직접 고친 결과는 통계에 다시 저장하지 않아요. (처음 분석한 결과가 저장돼 있어요)");
       else if (!saved) notes.push("내 결과는 이번 통계에 포함되지 않았어요.");
       if (total < 30) notes.push("참여자가 아직 적어서 숫자가 크게 달라질 수 있어요.");
       $("stat-note").innerHTML = notes.map((n) => `<span>${esc(n)}</span>`).join(" ");
@@ -358,26 +494,38 @@
   }
 
   // ---------- 이벤트 ----------
-  $("file").addEventListener("change", (e) => {
-    const f = e.target.files[0];
-    state.file = f || null;
-    $("file-name").textContent = f ? "✅ " + f.name : "카드·현금 내역 CSV 파일 선택";
-    $("btn-analyze").disabled = !f;
-    showError("");
-  });
+  $("file").addEventListener("change", (e) => { loadFile(e.target.files[0]); });
+  // 본인 이름을 바꾸면 이미 고른 파일을 다시 읽어서 본인 계좌 이체를 다시 찾음
+  $("owner-name").addEventListener("change", () => { if (state.file) loadFile(state.file); });
   const dz = $("dropzone");
   ["dragover", "dragenter"].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add("drag"); }));
   ["dragleave", "drop"].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove("drag"); }));
   dz.addEventListener("drop", (e) => {
     const f = e.dataTransfer.files[0];
-    if (!f) return;
-    state.file = f; $("file-name").textContent = "✅ " + f.name; $("btn-analyze").disabled = false;
+    if (f) loadFile(f);
   });
 
   $("btn-analyze").addEventListener("click", () => run(async () => {
-    const text = await readFileText(state.file);
-    return L.toTransactions(L.parseCSV(text));
+    if (!state.parsed || !state.parsed.txns.length) throw new Error("분석할 수 있는 거래가 없어요. CSV 형식을 확인해 주세요.");
+    return state.parsed;
   }));
+
+  // 'CSV 파일 만드는 법' 프롬프트 복사
+  const copyBtn = $("btn-copy-prompt");
+  if (copyBtn) copyBtn.addEventListener("click", async () => {
+    const text = $("ai-prompt").textContent.trim();
+    let ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; } catch (e) {
+      // file:// 로 열었거나 권한이 없을 때 대체 방법
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      try { ok = document.execCommand("copy"); } catch (e2) { ok = false; }
+      ta.remove();
+    }
+    copyBtn.textContent = ok ? "✅ 복사됐어요!" : "복사 실패 – 직접 드래그해서 복사해 주세요";
+    setTimeout(() => { copyBtn.textContent = "📋 프롬프트 복사"; }, 2000);
+  });
 
   document.querySelectorAll("[data-sample]").forEach((b) => b.addEventListener("click", () =>
     run(async () => ({ txns: L.generateSample(b.dataset.sample), skipped: 0, autoClassified: 0, isSample: true }))));
@@ -395,6 +543,38 @@
     link.href = url; link.download = `월렛미러_샘플_${a.dataset.download}.csv`; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }));
+
+  // 분류 직접 고치기 → 같은 가맹점 거래를 모두 바꾸고 결과 다시 계산 (메모리에만 보관)
+  const userOverrides = {};
+  $("result").addEventListener("change", (e) => {
+    const sel = e.target.closest("select[data-merchant]");
+    if (!sel || !state.result || !state.result.meta || !state.result.meta.txns) return;
+    const name = sel.dataset.merchant;
+    userOverrides[name] = sel.value;
+    L.setOverrides(userOverrides);
+    // 다시 그리기 전에 화면·목록 스크롤 위치와 줄 순서를 기억
+    const meta = state.result.meta, y = window.scrollY;
+    const ul = document.querySelector("#merchant-check ul");
+    const listTop = ul ? ul.scrollTop : 0;
+    if (!state.merchantOrder) state.merchantOrder = [...document.querySelectorAll("#merchant-check select[data-merchant]")].map((s) => s.dataset.merchant);
+    L.reclassify(meta.txns);
+    try {
+      state.result = L.analyze(meta.txns, state.result.income);
+      state.result.meta = meta;
+      state.openMerchants = true;
+      renderResult(state.result);
+      // 스크롤 위치 복원 → 고치던 자리 그대로
+      const ul2 = document.querySelector("#merchant-check ul");
+      if (ul2) ul2.scrollTop = listTop;
+      window.scrollTo({ top: y, behavior: "instant" });
+      const sel2 = [...document.querySelectorAll("#merchant-check select[data-merchant]")].find((s) => s.dataset.merchant === name);
+      if (sel2) sel2.focus({ preventScroll: true });
+      loadStats(state.result, { noSave: true }); // 바뀐 유형 기준으로 통계만 다시 조회 (저장은 안 함)
+    } catch (err) { showError(err.message); }
+  });
+  $("result").addEventListener("toggle", (e) => {
+    if (e.target.id === "merchant-check") state.openMerchants = e.target.open;
+  }, true);
 
   $("result").addEventListener("click", (e) => {
     const act = e.target.closest("[data-act]");

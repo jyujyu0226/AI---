@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<!--
+  월렛미러 CSV 파서 자동 테스트 (가짜 데이터만 사용)
+  실행 (Chrome 헤드리스, 프로젝트 폴더에서):
+    "C:/Program Files/Google/Chrome/Application/chrome.exe" --headless=new --allow-file-access-from-files \
+      --user-data-dir="%TEMP%/wm-test-profile" --dump-dom "file:///<프로젝트경로>/test-data/run-tests.html"
+  브라우저로 직접 열 때는 file:// 접근이 막히므로 위 옵션으로 실행하거나, 프로젝트 폴더에서
+  간단한 로컬 서버(예: python -m http.server)를 띄워 http://localhost:8000/test-data/run-tests.html 로 여세요.
+-->
+<html lang="ko"><head><meta charset="utf-8"><title>월렛미러 파서 테스트</title></head>
+<body><pre id="out">running…</pre>
+<script src="../js/data.js"></script>
+<script src="../js/logic.js"></script>
+<script>
+const L = WM.logic, INCOME = 700000;
+const lines = []; let pass = 0, fail = 0;
+function check(name, cond, detail) {
+  if (cond) pass++; else fail++;
+  lines.push(`${cond ? "PASS" : "FAIL"}  ${name}${detail ? "  — " + detail : ""}`);
+}
+function load(path) {
+  return new Promise((res, rej) => {
+    const x = new XMLHttpRequest();
+    x.open("GET", path); x.responseType = "arraybuffer";
+    x.onload = () => (x.status === 0 || x.status === 200) && x.response ? res(x.response) : rej(new Error("load " + path));
+    x.onerror = () => rej(new Error("load " + path));
+    x.send();
+  });
+}
+function analyzeFile(buf) {
+  const p = L.parseFile(buf);
+  return { p, r: L.analyze(p.txns, INCOME) };
+}
+
+// 파일별 기대값 (모두 가짜 데이터)
+const CASES = [
+  { file: "01_utf8_프롬프트양식.csv", enc: "UTF-8", read: 16, refunds: 1, skipped: 0, total: 220900, type: "배민 VIP형",
+    extra: (p) => [["현금 거래 2건", p.txns.filter((t) => t.method === "현금").length === 2], ["메모 읽음", p.txns[1].memo === "간식"]] },
+  { file: "02_utf8bom_카드사양식.csv", enc: "UTF-8(BOM)", read: 14, refunds: 0, skipped: 0, total: 101300, type: "카페 지박령형",
+    extra: (p) => [["우아한형제들→배달", p.txns[1].category === "배달"], ["씨유→식비", p.txns[3].category === "식비"], ["한국스마트카드→교통", p.txns[8].category === "교통"]] },
+  { file: "03_cp949_카드사양식.csv", enc: "EUC-KR(CP949)", read: 12, refunds: 1, skipped: 0, total: 272300, type: "쇼핑 도파민 중독형",
+    extra: (p) => [["한글 가맹점명 정상 디코딩", p.txns[2].merchant === "무신사"], ["승인구분=취소 → 음수", p.txns[3].amount === -89000],
+                   ["스마트스토어→쇼핑(식비 아님)", p.txns[5].category === "쇼핑"], ["카드번호 컬럼을 가맹점으로 쓰지 않음", !/\*/.test(p.txns[0].merchant)]] },
+  { file: "04_컬럼명다름.csv", enc: "UTF-8", read: 11, refunds: 0, skipped: 0, total: 163400,
+    extra: (p, r) => [["USD가 아닌 원화 금액 사용", p.txns[2].amount === 17000], ["결제일자가 아닌 승인일시 사용", r.curKey === "2026-10"],
+                      ["GOOGLE*YouTube→구독", p.txns[3].category === "구독"], ["지에스25→식비", p.txns[9].category === "식비"]] },
+  { file: "05_금액쉼표원.csv", enc: "UTF-8", read: 12, refunds: 2, skipped: 0, total: 1366200,
+    extra: (p) => [["따옴표 없는 18,900원", p.txns[1].amount === 18900], ["공백 낀 ' 21,000 '", p.txns[2].amount === 21000],
+                   ["따옴표 없는 -12,500", p.txns[3].amount === -12500], ["₩24,000", p.txns[5].amount === 24000],
+                   ["(5,000) → -5000", p.txns[6].amount === -5000], ["\"1,234,000원\"", p.txns[10].amount === 1234000]] },
+  { file: "06_상단제목줄.csv", enc: "UTF-8", read: 11, refunds: 0, skipped: 0, total: 125290, type: "구독 수집가형",
+    extra: (p) => [["헤더 = 5번째 줄", p.headerRow === 5], ["합계 줄 무시", p.summaryRows === 1], ["CU 역삼점→식비", p.txns[8].category === "식비"]] },
+  { file: "07_날짜형식혼합.csv", enc: "UTF-8", read: 8, refunds: 0, skipped: 2, total: 146100,
+    extra: (p) => [["날짜 8종 변환", p.txns.map((t) => t.date).join() === "2026-10-01,2026-10-03,2026-10-05,2026-10-07,2026-10-09,2026-10-11,2026-10-13,2026-10-15"],
+                   ["잘못된 날짜 2줄 사유 표시", p.reasons.date.n === 2 && /날짜를 못 읽은 줄 2개/.test(p.skipText)]] },
+  { file: "08_utf16_탭구분.csv", enc: "UTF-16", read: 5, refunds: 0, skipped: 1, total: 65100,
+    extra: (p) => [["탭 구분 감지", p.delimiter === "탭"], ["입금 줄(출금액 빈칸) 건너뜀", p.reasons.amount.n === 1]] },
+  { file: "11_식당이름_업종_메모.csv", enc: "UTF-8", read: 17, refunds: 0, skipped: 0, total: 294600,
+    extra: (p, r) => [
+      ["카테고리 순서대로", p.txns.map((t) => t.category).join() === "식비,식비,식비,식비,식비,식비,식비,식비,식비,카페,식비,식비,기타,쇼핑,쇼핑,문화,기타", p.txns.map((t) => t.category).join()],
+      ["업종 컬럼 인식", p.columns.industry === "가맹점업종"], ["대표 카테고리 = 식비", r.topCat === "식비"],
+      ["한마디에 식비 비중", /65%가 '식비'/.test(r.text.typeLine), r.text.typeLine],
+      ["분류 못한 가맹점 목록", r.unclassified.map((u) => u.name).join() === "홍길동상사,알수없는가게"]] },
+  { file: "12_메모전부같은값.csv", enc: "UTF-8", read: 10, refunds: 0, skipped: 0, total: 204300,
+    extra: (p, r) => [["메모 무시 안내", p.notes.length === 1 && /메모 컬럼/.test(p.notes[0])],
+      ["가맹점명으로 분류", p.txns.map((t) => t.category).join() === "카페,식비,쇼핑,교통,구독,기타,식비,문화,기타,쇼핑"],
+      ["식비 100% 아님", r.cat["식비"].share < 0.5]] },
+  { file: "13_카테고리전부식비.csv", enc: "UTF-8", read: 10, refunds: 0, skipped: 0, total: 204300,
+    extra: (p, r) => [["카테고리 무시 안내", p.notes.length === 1 && /카테고리 컬럼/.test(p.notes[0])],
+      ["가맹점명으로 분류", p.txns.map((t) => t.category).join() === "카페,식비,쇼핑,교통,구독,기타,식비,문화,배달,쇼핑"],
+      ["식비 100% 아님", r.cat["식비"].share < 0.5]] },
+  { file: "14_음수가지출_은행형식.csv", enc: "UTF-8(BOM)", read: 12, refunds: 1, skipped: 0, total: 146800,
+    extra: (p, r) => [["음수=지출 형식 감지", p.signFlipped === true], ["입금 2건 제외", p.deposits === 2 && p.depositSum === 1355724],
+      ["식비 100% 아님", r.cat["식비"].share < 0.5], ["배달 39500", r.cat["배달"].sum === 39500], ["무신사 환불 상계 → 쇼핑 0", r.cat["쇼핑"].sum === 0],
+      ["안내 문구", p.notes.some((n) => /음수 = 지출/.test(n)) && p.notes.some((n) => /입금으로 보이는/.test(n))]] },
+  { file: "15_본인계좌이체.csv", owner: "홍길동", enc: "UTF-8", read: 12, refunds: 1, skipped: 0, total: 129100,
+    extra: (p, r) => {
+      const cats = p.txns.map((t) => `${t.merchant}:${t.category}`).join();
+      return [["본인 이름·충전·은행·적금 → 이체", ["홍길동:이체", "카카오페이 충전:이체", "토스뱅크:이체", "적금 자동이체:이체"].every((x) => cats.includes(x)), cats],
+        ["친구 송금(김철수)은 지출로 남김", cats.includes("김철수:기타")],
+        ["분석 지출 = 이체 제외 129,100원", r.total === 129100, r.total],
+        ["이체 5건 650,000원 따로 집계", r.transfer.count === 5 && r.transfer.sum === 650000, JSON.stringify(r.transfer)],
+        ["목록에 이체 표시(맨 아래)", r.merchants[r.merchants.length - 1].category === "이체"]];
+    } },
+  { file: "09_오류_컬럼없음.csv", error: /컬럼을 찾지 못했어요/ },
+  { file: "10_오류_거래0건.csv", error: /^분석할 수 있는 거래가 없어요\. CSV 형식을 확인해 주세요\./ },
+];
+
+// 기존 샘플 회귀 테스트 (sample_csv/README.md 표의 판정과 같아야 함)
+const SAMPLES = [
+  ["01_배민VIP형_배달폭주.csv", "배민 VIP형"], ["02_구독수집가형_정기결제6개.csv", "구독 수집가형"],
+  ["03_월말파산형_월초몰아쓰기.csv", "월말 파산형"], ["04_카페지박령형_하루두잔.csv", "카페 지박령형"],
+  ["05_쇼핑도파민중독형_택배폭탄.csv", "쇼핑 도파민 중독형"], ["06_짠테크형_속세단절.csv", "속세 단절 짠테크형"],
+  ["07_Flex한방형_항공권결제.csv", "Flex 한방형"], ["08_인싸모임러형_밥약술약.csv", "인싸 모임러형"],
+  ["09_적자위험형_소득초과.csv", "쇼핑 도파민 중독형"], ["10_형식제각각_자동분류테스트.csv", "배민 VIP형"],
+];
+
+function unitTests() {
+  const D = [["2026.11.05", "2026-11-05"], ["2026-11-05", "2026-11-05"], ["20261105", "2026-11-05"], ["26/11/05", "2026-11-05"],
+    ["2026년 11월 5일", "2026-11-05"], ["2026-11-05 14:23:00", "2026-11-05"], ["'2026-11-05", "2026-11-05"], ["46331", "2026-11-05"],
+    ["2026-02-30", null], ["11/05", null], ["", null]];
+  D.forEach(([i, e]) => check(`parseDate("${i}")`, L.parseDate(i) === e, `→ ${L.parseDate(i)}`));
+  const A = [["12500", 12500], ["12,500", 12500], ["12,500원", 12500], ["\"12,500\"", 12500], [" 12,500 ", 12500], ["-12,500", -12500],
+    ["12,500-", -12500], ["(12,500)", -12500], ["△12,500", -12500], ["₩12,500", 12500], ["12,500 원", 12500], ["abc", NaN], ["", NaN]];
+  A.forEach(([i, e]) => { const v = L.parseAmount(i); check(`parseAmount(${JSON.stringify(i)})`, Number.isNaN(e) ? Number.isNaN(v) : v === e, `→ ${v}`); });
+  const C = [["지에스25 역삼점", "식비"], ["씨유 강남점", "식비"], ["CU 역삼점", "식비"], ["(주)우아한형제들", "배달"], ["쿠팡이츠서비스(주)", "배달"],
+    ["쿠팡(주)", "쇼핑"], ["쿠팡플레이", "구독"], ["메가엠지씨커피", "카페"], ["한국스마트카드", "교통"], ["NAVERPAY*스마트스토어", "쇼핑"],
+    ["GOOGLE*YouTube", "구독"], ["NETFLIX.COM", "구독"], ["코리아세븐", "식비"], ["카카오T 택시", "교통"], ["Cucumber Shop", "기타"], ["알수없는상점", "기타"],
+    // 식당 이름 (메뉴·브랜드 키워드, 이름 끝 패턴, 지점명·결제대행 접두어 제거)
+    ["하남돼지집 역삼점", "식비"], ["하남돼지집역삼점", "식비"], ["명동교자 본점", "식비"], ["진미옥", "식비"], ["을지로골뱅이", "식비"],
+    ["원조할매순대국", "식비"], ["청춘감자탕", "식비"], ["교동짬뽕", "식비"], ["이삭토스트", "식비"], ["아웃백스테이크하우스", "식비"],
+    ["빕스 강남점", "식비"], ["쿠우쿠우", "식비"], ["백채김치찌개", "식비"], ["땅스부대찌개", "식비"], ["이차돌", "식비"], ["미분당", "식비"],
+    ["가츠벤또", "식비"], ["쉐이크쉑", "식비"], ["써브웨이 역삼", "식비"], ["파파이스", "식비"], ["김가네", "식비"], ["샤브올데이", "식비"],
+    ["곱창이야기", "식비"], ["청년다방", "식비"], ["투다리", "식비"], ["서울대학교 생활협동조합", "식비"], ["(주)더본코리아", "식비"],
+    ["CJ푸드빌", "식비"], ["아워홈", "식비"], ["삼성웰스토리", "식비"], ["KCP*하남돼지집", "식비"], ["NICE-청춘감자탕", "식비"], ["행복분식2호점", "식비"],
+    // 오분류 방지
+    ["오늘의집", "쇼핑"], ["꽃집 플로라", "쇼핑"], ["목욕탕", "문화"], ["OO약국", "병원비"], ["스파오 강남점", "쇼핑"], ["스타벅스 역삼점", "카페"], ["스타벅스코리아", "카페"],
+    ["ABC마트", "쇼핑"], ["하이마트", "쇼핑"], ["홈플러스 강서점", "식비"], ["홈플러스강서점", "식비"], ["PUBG 펍지", "게임"], ["오리진", "기타"], ["OO철물상회", "기타"],
+    ["스타필드 하남", "쇼핑"], ["롯데몰 김포공항점", "쇼핑"], ["이케아 광명점", "쇼핑"], ["GS샵", "쇼핑"], ["이마트 왕십리점", "식비"], ["OO 정육점", "식비"], ["쿠팡이츠", "배달"], ["배민클럽", "구독"], ["롤링파스타", "식비"], ["(GS)25 S건대입구역", "식비"], ["SHABURO 21", "식비"], ["[CU]역삼점", "식비"],
+    ["애니타임피트니스 역삼점", "운동"], ["OO필라테스", "운동"], ["스크린골프존", "운동"], ["OO헬스장", "운동"], ["OO수영장", "운동"], ["나이키 운동화", "쇼핑"],
+    ["서울정형외과의원", "병원비"], ["온누리약국 역삼점", "병원비"], ["OO치과의원", "병원비"], ["OO한의원", "병원비"], ["한방삼계탕", "식비"], ["OO동물병원", "병원비"],
+    ["OO PC방", "게임"], ["STEAM PURCHASE", "게임"], ["넥슨코리아", "게임"], ["닌텐도 eShop", "게임"], ["보드게임카페", "문화"], ["OO보드게임", "문화"], ["코인노래연습장", "문화"]];
+  C.forEach(([i, e]) => check(`classify("${i}")`, L.classifyMerchant(i) === e, `→ ${L.classifyMerchant(i)}`));
+  // 업종·카테고리·메모 보조 분류
+  const T = [[{ merchant: "(주)한국정보통신", industry: "일반음식점" }, "식비"], [{ merchant: "나이스페이먼츠", industry: "커피전문점" }, "카페"],
+    [{ merchant: "케이지이니시스", category: "외식" }, "식비"], [{ merchant: "토스페이먼츠", memo: "점심" }, "식비"],
+    [{ merchant: "알수없음", memo: "커피" }, "카페"], [{ merchant: "스타벅스", category: "기타" }, "카페"], [{ merchant: "아무거나", category: "쇼핑" }, "쇼핑"],
+    [{ merchant: "알수없음", memo: "운동" }, "운동"], [{ merchant: "알수없음", memo: "병원" }, "병원비"], [{ merchant: "카드결제대행", industry: "종합병원" }, "병원비"], [{ merchant: "아무거나", category: "병원비" }, "병원비"]];
+  T.forEach(([i, e]) => { const c = L.classifyTxn(i).category; check(`classifyTxn(${JSON.stringify(i)})`, c === e, `→ ${c}`); });
+  // 1단계 재현 케이스: 따옴표 없이 "12,500원"을 쓴 실제 카드사식 CSV → 예전엔 12원으로 읽혀 짠테크형
+  const csv = "이용일자,가맹점명,이용금액\n2026-10-01,지에스25 역삼점,12,500원\n2026-10-02,(주)우아한형제들,23,000원\n2026-10-03,쿠팡이츠,31,000원";
+  const p = L.toTransactions(L.parseCSV(csv));
+  check("재현 케이스: 쪼개진 금액 복구", p.txns.map((t) => t.amount).join() === "12500,23000,31000", p.txns.map((t) => t.amount).join());
+  // 전부 '기타'일 때 "0%가 '식비'" 같은 문장이 나오지 않아야 함
+  const allEtc = L.analyze([{ date: "2026-10-01", merchant: "가게A", amount: 300000, category: "기타", method: "카드" },
+    { date: "2026-10-02", merchant: "가게B", amount: 50000, category: "기타", method: "카드" }], INCOME);
+  check("전부 기타 → '0%가 식비' 문장 없음", !/0%가 '/.test(allEtc.text.typeLine) && /분류하지 못했어요/.test(allEtc.text.typeLine), allEtc.text.typeLine);
+  const dom = L.analyze(L.reclassify([{ date: "2026-10-01", merchant: "김밥천국", amount: 9000, method: "카드" }, { date: "2026-10-02", merchant: "김밥천국", amount: 8000, method: "카드" }, { date: "2026-10-03", merchant: "GS25", amount: 1000, method: "카드" }]), INCOME);
+  check("한 카테고리 80% 이상 → 근거 안내", dom.dominance && dom.dominance.category === "식비" && /가맹점명에/.test(dom.dominance.why), JSON.stringify(dom.dominance));
+  const pm = [];
+  for (let d = 1; d <= 30; d += 3) pm.push({ date: `2026-10-${String(d).padStart(2, "0")}`, merchant: "김밥천국", amount: 5000, method: "카드" });
+  pm.push({ date: "2026-11-02", merchant: "스타벅스", amount: 5000, method: "카드" }, { date: "2026-11-04", merchant: "스타벅스", amount: 5000, method: "카드" });
+  const pr = L.analyze(L.reclassify(pm), INCOME);
+  check("마지막 달이 며칠치뿐이면 직전 달 분석", pr.curKey === "2026-10" && pr.partialMonth && pr.partialMonth.key === "2026-11", pr.curKey + " " + JSON.stringify(pr.partialMonth));
+  // 가장 많이 쓴 항목 절약법
+  const mk = (list) => L.analyze(L.reclassify(list.map(([m, a, d]) => ({ date: `2026-10-${String(d).padStart(2, "0")}`, merchant: m, amount: a, method: "카드" }))), INCOME);
+  const cafeR = mk([["스타벅스", 6000, 1], ["스타벅스", 6000, 3], ["메가커피", 2000, 5], ["이디야", 4000, 8], ["김밥천국", 5000, 9]]);
+  check("절약법: 1위 카페 + 숫자 채움", cafeR.topTip.cat === "카페" && cafeR.topTip.tips.length === 3 && !cafeR.topTip.tips.join().includes("{") && /평균 4,500원/.test(cafeR.topTip.tips[0]), cafeR.topTip.tips[0]);
+  check("절약법: 카페 예상 절약액", cafeR.topTip.action && cafeR.topTip.action.monthly > 0, JSON.stringify(cafeR.topTip.action));
+  const gameR = mk([["넥슨", 30000, 2], ["스팀", 25000, 10], ["김밥천국", 5000, 9]]);
+  check("절약법: 1위 게임 + 절약 규칙", gameR.topTip.cat === "게임" && gameR.topTip.action && gameR.topTip.action.monthly === 16500, JSON.stringify(gameR.topTip.action));
+  const medR = mk([["OO정형외과의원", 80000, 2], ["OO약국", 12000, 2], ["김밥천국", 5000, 9]]);
+  check("절약법: 1위 병원비는 줄이라고 하지 않음", medR.topTip.cat === "병원비" && medR.topTip.noCut && !medR.topTip.action, JSON.stringify(medR.topTip.action));
+  check("절약 플랜에 병원비 없음", !medR.plan.items.some((i) => i.cat === "병원비"));
+  // 0건/전부 환불이면 유형 판정하지 않음
+  let msg = "";
+  try { L.analyze([], INCOME); } catch (e) { msg = e.message; }
+  check("analyze([]) → 안내 메시지, 기본 결과 없음", /분석할 수 있는 거래가 없어요/.test(msg), msg);
+  msg = "";
+  try { L.analyze([{ date: "2026-10-01", merchant: "무신사", amount: -5000, category: "쇼핑", method: "카드" }], INCOME); } catch (e) { msg = e.message; }
+  check("환불만 있는 경우 → 안내 메시지", /분석할 수 있는 지출이 없어요/.test(msg), msg);
+}
+
+(async () => {
+  lines.push("== 단위 테스트 ==");
+  try { unitTests(); } catch (e) { check("unitTests", false, e.message); }
+  lines.push("", "== test-data 파일 ==");
+  for (const c of CASES) {
+    try {
+      const buf = await load(c.file);
+      if (c.error) {
+        let msg = "";
+        try { analyzeFile(buf); } catch (e) { msg = e.message; }
+        check(`${c.file}: 오류 안내`, c.error.test(msg), msg || "오류가 나지 않음");
+        continue;
+      }
+      L.setOwnerName(c.owner || "");
+      const { p, r } = analyzeFile(buf);
+      L.setOwnerName("");
+      const sum = p.txns.filter((t) => t.category !== L.TRANSFER).reduce((a, t) => a + t.amount, 0); // 본인 계좌 이체 제외
+      check(`${c.file}: 인코딩`, p.encoding === c.enc, p.encoding);
+      check(`${c.file}: 읽은 거래 ${c.read}건`, p.txns.length === c.read, `${p.txns.length}건, 건너뜀 ${p.skipped}, 환불 ${p.refunds}`);
+      check(`${c.file}: 건너뜀 ${c.skipped}건`, p.skipped === c.skipped, p.skipText);
+      check(`${c.file}: 취소·환불 ${c.refunds}건`, p.refunds === c.refunds);
+      check(`${c.file}: 순지출 합계 ${c.total}`, sum === c.total && r.total === c.total, `거래합 ${sum}, 분석총액 ${r.total}`);
+      if (c.type) check(`${c.file}: 유형`, r.type.name === c.type, r.type.name);
+      else lines.push(`INFO  ${c.file}: 유형 = ${r.type.name} (소득 70만 기준, 소득 대비 ${(r.total / INCOME * 100).toFixed(0)}%)`);
+      (c.extra ? c.extra(p, r) : []).forEach(([n, ok]) => check(`${c.file}: ${n}`, ok));
+    } catch (e) { check(c.file, false, e.message); }
+  }
+  lines.push("", "== sample_csv 회귀 (README 표와 비교) ==");
+  for (const [f, type] of SAMPLES) {
+    try {
+      const { p, r } = analyzeFile(await load("../sample_csv/" + f));
+      check(`${f}`, r.type.name === type, `${r.type.name} · 거래 ${p.txns.length}건 · 건너뜀 ${p.skipped} · 환불 ${p.refunds} · 지출 ${r.total} (소득 대비 ${(r.total / INCOME * 100).toFixed(0)}%, 위험도 ${r.risk}, 자동분류 ${p.autoClassified})`);
+    } catch (e) { check(f, false, e.message); }
+  }
+  lines.unshift(`결과: ${pass} PASS / ${fail} FAIL`, "");
+  document.getElementById("out").textContent = lines.join("\n");
+})();
+</script></body></html>

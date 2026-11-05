@@ -300,3 +300,69 @@ b, strong { font-weight: 800; }
 .stat-bar { margin: 14px auto 0; max-width: 420px; height: 14px; background: rgba(42, 37, 48, .08); border-radius: 99px; overflow: hidden; border: 1px solid rgba(255, 255, 255, .9); }
 .stat-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--pink), var(--pink-deep)); border-radius: 99px; transition: width .6s ease; }
 .stat-card .note span { display: block; }
+
+/* ---------- 업로드 상태 (총 N건 읽음) ---------- */
+.file-status { margin-top: 10px; padding: 10px 14px; border-radius: 4px; font-size: .9rem; background: rgba(42, 37, 48, .05); border: 1px solid var(--line); }
+.file-status.ok { background: #E6F4EC; border-color: rgba(47, 147, 114, .4); color: #22684F; }
+.file-status small { display: block; margin-top: 2px; color: inherit; opacity: .85; }
+
+/* ---------- CSV 파일 만드는 법 ---------- */
+.guide-card h2 { font-size: 1.2rem; font-weight: 900; }
+.guide-warn { margin-top: 12px; padding: 10px 14px; border-radius: 4px; background: #FFF4D6; border: 1px solid rgba(190, 140, 20, .35); font-weight: 700; font-size: .92rem; }
+.guide-warn small { font-weight: 500; }
+.guide-steps { margin: 14px 0 0 1.2em; font-size: .92rem; }
+.guide-steps li { margin-top: 4px; }
+.prompt-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 18px; font-weight: 800; font-size: .92rem; }
+.copy-btn { border: 0; border-radius: 999px; padding: 8px 14px; background: var(--ink); color: #fff; font-weight: 800; font-size: .85rem; cursor: pointer; }
+.copy-btn:hover { background: #4A3F55; }
+.prompt-box {
+  margin-top: 8px; padding: 14px; max-height: 320px; overflow: auto; border-radius: 4px;
+  background: rgba(255, 255, 255, .9); border: 1px solid var(--line); font-size: .82rem; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-all; font-family: Consolas, "D2Coding", monospace;
+}
+
+/* ---------- 분류되지 않은 가맹점 ---------- */
+.unclassified { margin-top: 16px; padding: 12px 14px; border-radius: 4px; background: rgba(42, 37, 48, .04); border: 1px dashed var(--line); font-size: .88rem; }
+.unc-title { font-weight: 800; }
+.unc-title small { font-weight: 500; color: var(--muted); }
+.unclassified ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.unclassified li { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; border-bottom: 1px solid rgba(42, 37, 48, .06); }
+.unclassified li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- 분류 근거 확인 · 직접 고치기 ---------- */
+.merchant-check { margin-top: 14px; font-size: .88rem; }
+.merchant-check summary { cursor: pointer; font-weight: 800; }
+.merchant-check summary small { font-weight: 500; color: var(--muted); }
+.merchant-check ul { list-style: none; margin: 8px 0 0; padding: 0; max-height: 420px; overflow: auto; }
+.merchant-check li { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(42, 37, 48, .07); }
+.mc-name { min-width: 0; }
+.mc-name span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.mc-name small { display: block; color: var(--muted); font-size: .76rem; }
+.merchant-check select { font: inherit; font-size: .82rem; padding: 4px 6px; border-radius: 4px; border: 1px solid var(--line); background: #fff; }
+.dominance { margin-top: 16px; padding: 12px 14px; border-radius: 4px; background: #FFF4D6; border: 1px solid rgba(190, 140, 20, .35); font-size: .88rem; }
+.dominance p + p { margin-top: 4px; }
+
+/* ---------- 본인 이름 / 본인 계좌 이체 ---------- */
+.owner-field { margin-top: 14px; }
+.owner-field .field-label small { font-weight: 500; color: var(--muted); }
+.owner-field input { width: 100%; font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 4px; background: rgba(255, 255, 255, .85); }
+.owner-help { display: block; margin-top: 4px; font-size: .78rem; }
+.merchant-check li.is-transfer { opacity: .7; }
+.merchant-check li.is-transfer b { text-decoration: line-through; }
+
+/* ---------- 가장 많이 쓴 항목 절약법 ---------- */
+.tip-card { border-left: 6px solid var(--tc, var(--pink)); }
+.tip-lead { margin-top: 8px; }
+.tip-list { margin: 10px 0 0 1.2em; font-size: .92rem; }
+.tip-list li { margin-top: 6px; }
+.tip-action { margin-top: 12px; padding: 10px 14px; border-radius: 4px; background: rgba(47, 147, 114, .1); border: 1px solid rgba(47, 147, 114, .3); font-size: .9rem; }
+
+/* ---------- 유형별 분포 ---------- */
+.stat-dist { list-style: none; margin: 16px auto 0; padding: 0; max-width: 440px; text-align: left; font-size: .86rem; }
+.stat-dist li { display: grid; grid-template-columns: 150px 1fr 52px; gap: 8px; align-items: center; padding: 3px 6px; border-radius: 4px; }
+.stat-dist li.me { background: rgba(217, 96, 140, .1); font-weight: 800; }
+.stat-dist em { font-style: normal; font-size: .72rem; color: #fff; background: var(--pink-deep); padding: 1px 6px; border-radius: 99px; margin-left: 2px; }
+.sd-track { height: 10px; background: rgba(42, 37, 48, .08); border-radius: 99px; overflow: hidden; }
+.sd-track i { display: block; height: 100%; border-radius: 99px; }
+.sd-val { text-align: right; }
+@media (max-width: 380px) { .stat-dist li { grid-template-columns: 120px 1fr 46px; } }
